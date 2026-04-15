@@ -27,7 +27,7 @@ Correctness verified: **50.000/50.000 identical results** between ref10 and dale
 |------|--------|
 | `src/crypto/crypto.cpp` | `generate_key_derivation()` calls `fast_generate_key_derivation()` via C FFI — scalarmult + cofactor x8, entirely in Rust |
 | `src/crypto/CMakeLists.txt` | Links `libmonero_fast_crypto.a` |
-| `src/cryptonote_config.h` | Increased block batch limits (10000 blocks, 20MB) |
+| `src/cryptonote_config.h` | Increased block batch limits: `MAX_BLOCK_COUNT` 1000→10000, `MAX_RPC_CONTENT_LENGTH` 1MB→20MB. Only effective when connected to a node with matching limits (e.g. [tex8com/cuprate](https://github.com/tex8com/cuprate/tree/fast-rpc)). Against standard nodes, the node's lower limits apply — no negative effect. |
 | `src/device/device_io_hid.cpp` | Ledger fix: dispatch HID calls to main thread on macOS (PAC) |
 | `external/monero-fast-crypto/` | New: Rust crate wrapping curve25519-dalek, exports C API |
 | `share/Info.plist` | Added `NSCameraUsageDescription` for macOS QR scanner |
