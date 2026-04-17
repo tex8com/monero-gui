@@ -1,15 +1,28 @@
 # Monero GUI — Fast Crypto Edition
 
 **Author:** Roland Kohlhuber  
-**Based on:** [monero-project/monero-gui](https://github.com/monero-project/monero-gui)
+**Based on:** [monero-project/monero-gui](https://github.com/monero-project/monero-gui)  
+**Optimized Node:** [tex8com/cuprate](https://github.com/tex8com/cuprate/tree/fast-rpc) — use both together for maximum sync speed
 
 ---
 
 ## What changed
 
-The wallet's innermost cryptographic function `generate_key_derivation()` — responsible for scanning every transaction during sync — has been replaced with a Rust/[curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) implementation via C FFI. The original Monero wallet uses the `ref10` C library from 2014. This fork replaces only the scalar multiplication with a modern, optimized implementation. **Zero changes** to wallet logic, GUI, Ledger support, networking, or protocol code.
+### 1. Fast Crypto (1.65x faster scanning)
 
-Additionally, a macOS 26+ Ledger crash fix has been applied (PAC pointer authentication enforcement).
+The wallet's innermost cryptographic function `generate_key_derivation()` — responsible for scanning every transaction during sync — has been replaced with a Rust/[curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) implementation via C FFI. The original Monero wallet uses the `ref10` C library from 2014. This fork replaces only the scalar multiplication with a modern, optimized implementation. **Zero changes** to wallet logic, GUI, Ledger support, or protocol code.
+
+### 2. gzip RPC Compression (2-3x less network transfer)
+
+The wallet sends `Accept-Encoding: gzip` in HTTP requests and decompresses gzip responses from the node. When connected to a gzip-capable node (like [tex8com/cuprate](https://github.com/tex8com/cuprate/tree/fast-rpc)), block data is compressed before transfer — reducing bandwidth usage by 2-3x. **Fully backwards compatible:** against standard nodes (monerod) that don't support gzip, responses arrive uncompressed as usual.
+
+### 3. Increased Block Batch Limits (50 MB per batch)
+
+Block batch limits have been increased (`MAX_BLOCK_COUNT` 1000→10000, `MAX_RPC_CONTENT_LENGTH` 1MB→50MB). This allows downloading more blocks per request when connected to a node with matching limits (like [tex8com/cuprate](https://github.com/tex8com/cuprate/tree/fast-rpc)). Against standard nodes, the node's lower limits apply — no negative effect.
+
+### 4. macOS 26+ Ledger Crash Fix
+
+Ledger HID calls are dispatched to the main thread on macOS (PAC pointer authentication enforcement).
 
 ### Measured performance (Apple M4, 50.000 iterations, 3 runs averaged)
 
@@ -27,10 +40,13 @@ Correctness verified: **50.000/50.000 identical results** between ref10 and dale
 |------|--------|
 | `src/crypto/crypto.cpp` | `generate_key_derivation()` calls `fast_generate_key_derivation()` via C FFI — scalarmult + cofactor x8, entirely in Rust |
 | `src/crypto/CMakeLists.txt` | Links `libmonero_fast_crypto.a` |
-| `src/cryptonote_config.h` | Increased block batch limits: `MAX_BLOCK_COUNT` 1000→10000, `MAX_RPC_CONTENT_LENGTH` 1MB→20MB. Only effective when connected to a node with matching limits (e.g. [tex8com/cuprate](https://github.com/tex8com/cuprate/tree/fast-rpc)). Against standard nodes, the node's lower limits apply — no negative effect. |
+| `src/cryptonote_config.h` | Increased block batch limits: `MAX_BLOCK_COUNT` 1000→10000, `MAX_RPC_CONTENT_LENGTH` 1MB→50MB |
 | `src/device/device_io_hid.cpp` | Ledger fix: dispatch HID calls to main thread on macOS (PAC) |
 | `external/monero-fast-crypto/` | New: Rust crate wrapping curve25519-dalek, exports C API |
 | `share/Info.plist` | Added `NSCameraUsageDescription` for macOS QR scanner |
+| `contrib/epee/include/net/http_client.h` | Sends `Accept-Encoding: gzip`, accepts gzip Content-Encoding |
+| `contrib/epee/include/storages/http_abstract_invoke.h` | zlib gzip decompression in `invoke_http_bin()` before deserialization |
+| `contrib/epee/src/CMakeLists.txt` | Links zlib (`z`) |
 
 ---
 
@@ -72,12 +88,22 @@ Requires `hidapi` and `libusb` (installed via brew above). Connect your Ledger, 
 
 **macOS 26+ (Tahoe):** The Ledger PAC crash fix is included — no additional steps needed.
 
-## Note on real-world speedup
+## Best performance: use with Cuprate node
 
-The 1.65x improvement applies to the **cryptographic scanning** (the `ge_scalarmult` operation). When connected to a **remote node**, network latency dominates — the wallet spends ~90% of its time waiting for blocks, not computing. The speedup is most noticeable during:
+For maximum sync speed, connect this wallet to [tex8com/cuprate (fast-rpc branch)](https://github.com/tex8com/cuprate/tree/fast-rpc):
 
-- Full wallet restore with a **local node**
-- Scanning large numbers of blocks after being offline
+| Setup | Initial Sync (45K blocks) | Block Scan |
+|-------|---------------------------|------------|
+| This wallet + standard monerod | 19s | network-limited |
+| This wallet + **Cuprate (fast-rpc)** | **4s** | **gzip compressed, 50MB batches** |
+| Standard wallet + Cuprate | 12s | no gzip (still fast) |
+
+The combined optimizations:
+- **gzip compression** — 2-3x less data over the network (only when both sides support it)
+- **50MB batch limits** — fewer HTTP round-trips
+- **On-the-fly TX pruning** — node strips RCT prunable data before sending
+- **Batch output-index lookups** — node computes indices 46x faster
+- **1.65x faster crypto** — wallet scans transactions faster
 
 ## License
 
