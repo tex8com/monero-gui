@@ -50,35 +50,39 @@ Correctness verified: **50.000/50.000 identical results** between ref10 and dale
 
 ---
 
-## Building
+## Building (macOS)
 
-### Prerequisites
+### 1. Install dependencies
 
 ```bash
-# macOS
 brew install boost cmake libsodium miniupnpc zeromq hidapi pkg-config qt@5
-# Rust (for building the fast crypto library)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Build
+### 2. Clone
 
 ```bash
-# 1. Clone with submodules
-git clone --recursive -b fast-crypto https://github.com/tex8com/monero-gui.git
+git clone --recursive https://github.com/tex8com/monero-gui.git
 cd monero-gui
+```
 
-# 2. Build the Rust crypto library
-cd monero/external/monero-fast-crypto
-cargo build --release
-cd ../../..
+### 3. Build Rust crypto library
 
-# 3. Build the GUI
+```bash
+cd monero/external/monero-fast-crypto && cargo build --release && cd ../../..
+```
+
+### 4. Build GUI
+
+```bash
 mkdir -p build/release && cd build/release
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$(brew --prefix qt@5) ../..
 make -j$(sysctl -n hw.ncpu)
+```
 
-# 4. Run
+### 5. Run
+
+```bash
 open bin/monero-wallet-gui.app
 ```
 
