@@ -109,6 +109,20 @@ The combined optimizations:
 - **Batch output-index lookups** — node computes indices 46x faster
 - **1.65x faster crypto** — wallet scans transactions faster
 
+## Known limitations & next steps
+
+### Ledger restore: last ~90.000 blocks are slow
+
+**Symptom:** When restoring a Ledger wallet, the first part syncs quickly, but the last ~90.000 blocks slow down noticeably.
+
+**Root cause — transaction density, not a bug:**
+- Fast Crypto (`curve25519-dalek`) does apply for Ledger: `device_ledger::generate_key_derivation()` runs in software when `has_view_key = true` (TRANSACTION_PARSE mode), calling `crypto::generate_key_derivation()` → `fast_generate_key_derivation()`. So the 1.65x speedup is active.
+- The bottleneck is that recent Monero blocks contain significantly more transactions and outputs per block than older blocks. Every output requires one `generate_key_derivation()` call.
+- The wallet scan loop in `wallet2.cpp` is **single-threaded** — one CPU core at ~100% while 1.4 GB RAM is in use.
+
+**Next step: multi-threaded scanning in `wallet2.cpp`**
+The scan loop (`process_new_blockchain_entry`) is the target. Parallelising output checking across P-cores would bring the last 90k blocks in line with the rest of the restore. This is a deeper change to wallet2 and is tracked as the next optimization.
+
 ## License
 
 Same as upstream Monero: BSD-3-Clause. The Rust library (`monero-fast-crypto`) is MIT.
