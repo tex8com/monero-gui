@@ -50,45 +50,87 @@ Correctness verified: **50.000/50.000 identical results** between ref10 and dale
 
 ---
 
-## Building (macOS)
+## Building
 
-### 1. Install dependencies
+### macOS
 
+**1. Install dependencies**
 ```bash
 brew install boost cmake libsodium miniupnpc zeromq hidapi pkg-config qt@5
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### 2. Clone
-
+**2. Clone**
 ```bash
 git clone --recursive https://github.com/tex8com/monero-gui.git
 cd monero-gui
 ```
 
-### 3. Build Rust crypto library
-
+**3. Build Rust crypto library**
 ```bash
 cd monero/external/monero-fast-crypto && cargo build --release && cd ../../..
 ```
 
-### 4. Build GUI
-
+**4. Build GUI**
 ```bash
 mkdir -p build/release && cd build/release
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$(brew --prefix qt@5) ../..
 make -j$(sysctl -n hw.ncpu)
 ```
 
-### 5. Run
-
+**5. Run**
 ```bash
 open bin/monero-wallet-gui.app
 ```
 
+---
+
+### Linux (Ubuntu / Debian)
+
+**1. Install dependencies**
+```bash
+sudo apt update
+sudo apt install build-essential cmake pkg-config \
+  libboost-all-dev libssl-dev libzmq3-dev libunbound-dev \
+  libsodium-dev libminiupnpc-dev libhidapi-dev libusb-1.0-0-dev \
+  qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev \
+  qml-module-qtquick2 qml-module-qtquick-controls2 \
+  qml-module-qtquick-layouts qml-module-qtquick-window2 \
+  qml-module-qt-labs-settings qml-module-qt-labs-folderlistmodel \
+  qml-module-qtgraphicaleffects libqt5svg5-dev
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+**2. Clone**
+```bash
+git clone --recursive https://github.com/tex8com/monero-gui.git
+cd monero-gui
+```
+
+**3. Build Rust crypto library**
+```bash
+cd monero/external/monero-fast-crypto && cargo build --release && cd ../../..
+```
+
+**4. Build GUI**
+```bash
+mkdir -p build/release && cd build/release
+cmake -DCMAKE_BUILD_TYPE=Release ../ ..
+make -j$(nproc)
+```
+
+**5. Run**
+```bash
+./bin/monero-wallet-gui
+```
+
+---
+
 ### Ledger Support
 
-Requires `hidapi` and `libusb` (installed via brew above). Connect your Ledger, open the Monero app, then select "Hardware Wallet" in the GUI.
+Requires `hidapi` and `libusb` (included in dependencies above). Connect your Ledger, open the Monero app, then select "Hardware Wallet" in the GUI.
 
 **macOS 26+ (Tahoe):** The Ledger PAC crash fix is included — no additional steps needed.
 
