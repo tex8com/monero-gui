@@ -61,7 +61,12 @@
 
 namespace {
     static const int DAEMON_BLOCKCHAIN_HEIGHT_CACHE_TTL_SECONDS = 5;
-    static const int DAEMON_BLOCKCHAIN_TARGET_HEIGHT_CACHE_TTL_SECONDS = 30;
+    // During bulk sync, the daemon is busy servicing 8 parallel GetBlocks requests;
+    // querying target_height on the main client ends up queued behind 15MB-50MB block
+    // responses → 12+s blocking per first-block-after-fast_refresh callback. 10min
+    // TTL is plenty: the progress bar's "target" only needs to be roughly correct
+    // during sync. After sync completes, 10min is also fine for idle polling.
+    static const int DAEMON_BLOCKCHAIN_TARGET_HEIGHT_CACHE_TTL_SECONDS = 600;
     static const int WALLET_CONNECTION_STATUS_CACHE_TTL_SECONDS = 5;
 
     static constexpr char ATTRIBUTE_SUBADDRESS_ACCOUNT[] ="gui.subaddress_account";

@@ -24,6 +24,51 @@ Block batch limits have been increased (`MAX_BLOCK_COUNT` 1000→10000, `MAX_RPC
 
 Ledger HID calls are dispatched to the main thread on macOS (PAC pointer authentication enforcement).
 
+### 5. Parallel `fast_refresh` — hash-phase goes 12× faster
+
+The first sync phase (`fast_refresh`) pulls only block **hashes** to advance `m_blockchain`, then the block-scan phase follows. Upstream does this serially: one `get_hashes` request at a time, ~250 blocks per round-trip.
+
+This fork fires **16 parallel `pull_hashes_extra` calls** in every round, each requesting a disjoint height range. A dedicated client pool (`m_pull_clients`, `PARALLEL_FETCH_COUNT = 16`) keeps connections hot. Against a node that answers `get_hashes` with a bulk-range path (like [tex8com/cuprate](https://github.com/tex8com/cuprate/tree/fast-rpc) with its `BlockHashInRange` handler), 100 k hashes are returned per call.
+
+**Result:** fast_refresh on a Ledger restore drops from **~6 min → ~30 s** (≈12× faster).
+
+### 6. Speculative block prefetch — pipeline the block-scan phase
+
+Upstream pulls a batch of blocks, parses/scans them, then pulls the next batch. The wallet sits idle on every network round-trip.
+
+This fork makes the main `pull_blocks` call run **concurrently** with 16 speculative `pull_blocks_extra` prefetches at future heights (not after). When the main batch finishes parsing, the next batch is already in memory. Gap validation discards prefetches that don't align with the actual chain advance (daemons return variable block counts).
+
+**Result:** block-scan iteration goes from ~300 blocks/s → **~738 blocks/s** (≈2.5× faster). 17 000-block iterations land in 22–23 s.
+
+### 7. HASHCHAIN_BOUNDS_FAIL recovery
+
+If the cached `m_blockchain` is out of sync with the daemon (common after switching between nodes with different chain tips), the wallet used to loop forever on `HASHCHAIN_BOUNDS_FAIL`. This fork detects the inconsistency and truncates `m_blockchain` back to a valid height, then re-runs `fast_refresh` to catch up. No more hung syncs after node-switch.
+
+### 8. `daemonBlockChainTargetHeight` TTL: 30 s → 600 s
+
+The Qt UI polled `get_info` every 30 s to update the "target height" indicator. Because epee's HTTP client is **strictly serial per connection**, this poll would queue behind an in-flight 50 MB `get_blocks` response and block the scan callback for up to **12 s per hot block**. Raising the TTL to 600 s during sync eliminates the stall without losing UI responsiveness.
+
+### 9. epee deserialization limits: 65536×3 → 65536×16
+
+With 50 MB batches carrying ~2000 blocks × ~40 txs × nested ring/output structs, the default epee object/field/string limits (`65536 × 3 ≈ 200 k`) overflowed and deserialization silently failed. Raised to `65536 × 16 ≈ 1 M` per dimension.
+
+### 10. Cross-machine PERF correlation
+
+Every binary RPC request carries an `X-Perf-Req-Id` header plus `send_epoch_ms` / `recv_epoch_ms` wall-clock timestamps. The node (Cuprate fork) echoes the same request-id in its `[PERF RPC]` logs, so a single sync run can be traced end-to-end across both machines without a shared clock. `MCWARNING("global", …)` is used explicitly because `net.http` is filtered at `FATAL` in many builds.
+
+### 11. RAII thread cleanup
+
+Parallel fetch threads are guarded by `epee::misc_utils::create_scope_leave_handler` so an exception between launch and join cannot trigger `std::terminate` (which did happen once when the Ledger disconnected mid-sync).
+
+### Files modified for parallel/prefetch sync
+
+| File | Change |
+|------|--------|
+| `src/wallet/wallet2.cpp` | Parallel `fast_refresh`, speculative prefetch, gap validation, HASHCHAIN_BOUNDS recovery, `PREFETCH_BATCH = 1000`, `max_block_count = 1000` on `pull_blocks`, RAII scope guards around parallel threads, per-block/per-tx PERF logging (`HOT_BLOCK`, `SLOW_TX`, `callback_on_new_block_us`) |
+| `src/wallet/wallet2.h` | `PARALLEL_FETCH_COUNT = 16`, new `pull_hashes_extra(...)` signature, `pull_blocks_extra(..., max_block_count, ...)` param, `pull_and_parse_next_blocks(..., prev_blocks_start_height, ...)` param |
+| `src/libwalletqt/Wallet.cpp` | `DAEMON_BLOCKCHAIN_TARGET_HEIGHT_CACHE_TTL_SECONDS` 30 → 600 |
+| `contrib/epee/include/storages/http_abstract_invoke.h` | `X-Perf-Req-Id` header, `send/recv_epoch_ms`, gzip-timing, object/field/string limits raised `65536×3 → 65536×16`, `MCWARNING("global", …)` PERF line |
+
 ### Measured performance (Apple M4, 50.000 iterations, 3 runs averaged)
 
 | | Ops/s (1 core) | us/Op | Full Restore (1 core) | Full Restore (4 P-cores) |
@@ -144,12 +189,22 @@ For maximum sync speed, connect this wallet to [tex8com/cuprate (fast-rpc branch
 | This wallet + **Cuprate (fast-rpc)** | **4s** | **gzip compressed, 50MB batches** |
 | Standard wallet + Cuprate | 12s | no gzip (still fast) |
 
+### Ledger initial-restore (full chain, ~3.6 M blocks)
+
+| | Upstream | This fork + Cuprate (fast-rpc) |
+|---|---|---|
+| `fast_refresh` (hash phase) | ~6 min | **~30 s** (12× faster) |
+| Block-scan throughput | ~300 blocks/s | **~738 blocks/s** (2.5× faster) |
+| Total restore time | ~16 min | **~3–4 min** (4–5× faster) |
+
 The combined optimizations:
 - **gzip compression** — 2-3x less data over the network (only when both sides support it)
 - **50MB batch limits** — fewer HTTP round-trips
 - **On-the-fly TX pruning** — node strips RCT prunable data before sending
 - **Batch output-index lookups** — node computes indices 46x faster
 - **1.65x faster crypto** — wallet scans transactions faster
+- **16 parallel HTTP clients** — both `fast_refresh` hashes and block prefetch pipelined
+- **Speculative prefetch** — next batches arrive while current one is still being scanned
 
 ## Known limitations & next steps
 
@@ -164,6 +219,12 @@ The combined optimizations:
 
 **Next step: multi-threaded scanning in `wallet2.cpp`**
 The scan loop (`process_new_blockchain_entry`) is the target. Parallelising output checking across P-cores would bring the last 90k blocks in line with the rest of the restore. This is a deeper change to wallet2 and is tracked as the next optimization.
+
+### TCP per-connection variance — the next frontier
+
+With CPU 82% idle and network not saturated (12.6 MB/s aggregate vs 25 MB/s link capacity), the remaining bottleneck is **slowest-wins behaviour across 16 TCP connections**: per-connection throughput varies 0.69–2.87 MB/s (≈4× spread). Raising parallelism beyond 16 gives diminishing returns because every batch has to wait for its slowest connection.
+
+The architectural fix is **HTTP/2 multiplexing** (all streams share one congestion window) or **gRPC streaming** (server-streamed blocks, no per-batch round-trip). Both are tracked as future work — see discussion in this fork's commit history.
 
 ## License
 
