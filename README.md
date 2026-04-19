@@ -56,7 +56,27 @@ With 50 MB batches carrying ~2000 blocks × ~40 txs × nested ring/output struct
 
 Every binary RPC request carries an `X-Perf-Req-Id` header plus `send_epoch_ms` / `recv_epoch_ms` wall-clock timestamps. The node (Cuprate fork) echoes the same request-id in its `[PERF RPC]` logs, so a single sync run can be traced end-to-end across both machines without a shared clock. `MCWARNING("global", …)` is used explicitly because `net.http` is filtered at `FATAL` in many builds.
 
-### 11. RAII thread cleanup
+### 11. Optional gRPC streaming sync (Phase 1 complete)
+
+When built with `-DMONERO_ENABLE_GRPC_STREAM=ON` and pointed at a cuprated node that exposes the `[rpc.grpc]` endpoint (see [tex8com/cuprate fast-rpc](https://github.com/tex8com/cuprate/tree/fast-rpc)), the wallet ditches the 16-parallel bin-RPC pull pattern in favour of a single HTTP/2 server-streaming call.
+
+A standalone C++ smoke test (`cuprate/tools/grpc-smoke`) validated the server: **one stream delivered 10 000 blocks at 22.7 MB/s sustained throughput — the 16-parallel bin-RPC baseline tops out around 12.6 MB/s aggregate.** HTTP/2 multiplexing eliminates the per-TCP-connection variance that caps bin RPC at roughly half link bandwidth. The stream carries the chain tip in every chunk, so `get_info` polls no longer stall behind in-flight 50 MB bin responses (the whole reason the TTL was bumped to 600 s in change #8 above).
+
+**Build deps** when `MONERO_ENABLE_GRPC_STREAM=ON`:
+- macOS: `brew install grpc`
+- Linux: `apt install libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc`
+
+**Enable streaming sync** (zero code changes, existing wallet binary works):
+```bash
+export CUPRATE_GRPC_ENDPOINT=<cuprate-host>:18091
+./bin/monero-wallet-gui.app/Contents/MacOS/monero-wallet-gui   # or monero-wallet-cli
+```
+
+Look for `[GRPC client] OPEN ...` and `[GRPC client] CHUNK seq=... cum_mbs=...` in the wallet log. On any stream failure the wallet falls back to bin RPC transparently for the rest of the session.
+
+Default build path (no flag) compiles unchanged — nothing to configure for users staying on bin RPC.
+
+### 12. RAII thread cleanup
 
 Parallel fetch threads are guarded by `epee::misc_utils::create_scope_leave_handler` so an exception between launch and join cannot trigger `std::terminate` (which did happen once when the Ledger disconnected mid-sync).
 
