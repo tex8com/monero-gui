@@ -29,6 +29,7 @@
 #include "Wallet.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -46,6 +47,9 @@
 #include "model/SubaddressModel.h"
 #include "model/SubaddressAccountModel.h"
 #include "wallet/api/wallet2_api.h"
+#ifdef MONERO_GRPC_STREAM
+#include "wallet/grpc_stream/grpc_stream_status.h"
+#endif
 
 #include <QFile>
 #include <QDir>
@@ -354,6 +358,29 @@ bool Wallet::connectToDaemon()
 void Wallet::setTrustedDaemon(bool arg)
 {
     m_walletImpl->setTrustedDaemon(arg);
+}
+
+void Wallet::setGrpcStreamEndpoint(const QString &endpoint)
+{
+    m_walletImpl->setGrpcStreamEndpoint(endpoint.trimmed().toStdString());
+}
+
+QString Wallet::grpcStreamEndpoint() const
+{
+    return QString::fromStdString(m_walletImpl->grpcStreamEndpoint());
+}
+
+bool Wallet::grpcStreamActive() const
+{
+#ifdef MONERO_GRPC_STREAM
+    const int64_t last_ms = cuprate_grpc_stream::last_successful_chunk_unix_ms().load(std::memory_order_relaxed);
+    if (last_ms == 0) return false;
+    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return (now_ms - last_ms) < 10000;  // 10 s liveness window
+#else
+    return false;
+#endif
 }
 
 bool Wallet::viewOnly() const

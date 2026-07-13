@@ -49,6 +49,33 @@ MoneroComponents.Dialog {
 
     function onCancel() { root.close(); }
 
+    function parseHostPort(address) {
+        const text = (address || "").trim();
+        const separator = text.lastIndexOf(":");
+        if (separator <= 0 || separator === text.length - 1) {
+            return ["", text, ""];
+        }
+        return ["", text.substring(0, separator), text.substring(separator + 1)];
+    }
+
+    function defaultGrpcPort(rpcPort) {
+        if (rpcPort === "18089") return "18091";
+        if (rpcPort === "28089") return "28091";
+        if (rpcPort === "38089") return "38091";
+        return "";
+    }
+
+    function isTex8CuprateHost(host) {
+        return host === "152.53.133.188" || host === "10.80.8.1" || host === "tex8.com";
+    }
+
+    function fillGrpcFromRemoteNode() {
+        if (grpcNodeAddress.daemonAddrText === "")
+            grpcNodeAddress.daemonAddrText = remoteNodeAddress.daemonAddrText === "tex8.com" ? "152.53.133.188" : remoteNodeAddress.daemonAddrText;
+        if (grpcNodeAddress.daemonPortText === "")
+            grpcNodeAddress.daemonPortText = defaultGrpcPort(remoteNodeAddress.daemonPortText);
+    }
+
     function add(callbackOnSuccess) {
         root.editMode = false;
         root.callbackOnSuccess = callbackOnSuccess;
@@ -57,11 +84,18 @@ MoneroComponents.Dialog {
     }
 
     function edit(remoteNode, callbackOnSuccess) {
-        const hostPort = remoteNode.address.match(/^(.*?)(?:\:?(\d*))$/);
-        if (hostPort) {
-            remoteNodeAddress.daemonAddrText = hostPort[1];
-            remoteNodeAddress.daemonPortText = hostPort[2];
-        }
+        const hostPort = parseHostPort(remoteNode.address);
+        remoteNodeAddress.daemonAddrText = hostPort[1];
+        remoteNodeAddress.daemonPortText = hostPort[2];
+
+        const inferredGrpc = remoteNode.grpcAddress || (isTex8CuprateHost(hostPort[1]) && defaultGrpcPort(hostPort[2]) !== ""
+            ? (hostPort[1] === "tex8.com" ? "152.53.133.188" : hostPort[1]) + ":" + defaultGrpcPort(hostPort[2])
+            : "");
+        const grpcHostPort = parseHostPort(inferredGrpc);
+        grpcStreamCheckBox.checked = inferredGrpc !== "";
+        grpcNodeAddress.daemonAddrText = grpcHostPort[1];
+        grpcNodeAddress.daemonPortText = grpcHostPort[2];
+
         daemonUsername.text = remoteNode.username;
         daemonPassword.text = remoteNode.password;
         setTrustedDaemonCheckBox.checked = remoteNode.trusted;
@@ -75,6 +109,7 @@ MoneroComponents.Dialog {
         if (root.success && callbackOnSuccess) {
             callbackOnSuccess({
                 address: remoteNodeAddress.getAddress(),
+                grpcAddress: grpcStreamCheckBox.checked ? grpcNodeAddress.getAddress() : "",
                 username: daemonUsername.text,
                 password: daemonPassword.text,
                 trusted: setTrustedDaemonCheckBox.checked,
@@ -83,6 +118,9 @@ MoneroComponents.Dialog {
 
         remoteNodeAddress.daemonAddrText = "";
         remoteNodeAddress.daemonPortText = "";
+        grpcStreamCheckBox.checked = false;
+        grpcNodeAddress.daemonAddrText = "";
+        grpcNodeAddress.daemonPortText = "";
         daemonUsername.text = "";
         daemonPassword.text = "";
         setTrustedDaemonCheckBox.checked = false;
@@ -101,6 +139,29 @@ MoneroComponents.Dialog {
         Keys.onEnterPressed: root.onOk()
         Keys.onReturnPressed: root.onOk()
         Keys.onEscapePressed: root.onCancel()
+    }
+
+    MoneroComponents.CheckBox {
+        id: grpcStreamCheckBox
+        activeFocusOnTab: true
+        text: qsTr("Use Cuprate gRPC streaming sync") + translationManager.emptyString
+        tooltip: qsTr("Optional. Use a Cuprate gRPC endpoint for faster block streaming while this remote node remains the normal wallet RPC endpoint.") + translationManager.emptyString
+
+        onClicked: {
+            if (checked) {
+                root.fillGrpcFromRemoteNode();
+            }
+        }
+    }
+
+    MoneroComponents.RemoteNodeEdit {
+        id: grpcNodeAddress
+        Layout.fillWidth: true
+        placeholderFontSize: 15
+        visible: grpcStreamCheckBox.checked
+
+        daemonAddrLabelText: qsTr("gRPC address") + translationManager.emptyString
+        daemonPortLabelText: qsTr("gRPC port") + translationManager.emptyString
     }
 
     RowLayout {
@@ -158,7 +219,7 @@ MoneroComponents.Dialog {
         MoneroComponents.StandardButton {
             activeFocusOnTab: true
             fontBold: false
-            enabled: remoteNodeAddress.getAddress() != ""
+            enabled: remoteNodeAddress.getAddress() != "" && (!grpcStreamCheckBox.checked || grpcNodeAddress.getAddress() != "")
             text: qsTr("Ok") + translationManager.emptyString
 
             onClicked: {

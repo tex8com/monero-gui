@@ -37,6 +37,13 @@ Rectangle {
     id: item
     color: "transparent"
     property var connected: Wallet.ConnectionStatus_Disconnected
+    property bool grpcStreamConfigured: false
+    property bool grpcStreamRecentlyActive: false
+
+    function refreshGrpcStreamState() {
+        grpcStreamConfigured = !!appWindow.currentWallet && appWindow.currentWallet.grpcStreamEndpoint() !== "";
+        grpcStreamRecentlyActive = grpcStreamConfigured && appWindow.currentWallet.grpcStreamActive();
+    }
 
     function getConnectionStatusString(status) {
         switch (appWindow.daemonStartStopInProgress)
@@ -69,6 +76,14 @@ Rectangle {
             default:
                 return qsTr("Invalid connection status");
         }
+    }
+
+    Timer {
+        interval: 1000
+        repeat: true
+        running: true
+        triggeredOnStart: true
+        onTriggered: item.refreshGrpcStreamState()
     }
 
     RowLayout {
@@ -161,9 +176,38 @@ Rectangle {
                 }
             }
 
-            MoneroComponents.TextPlain {
+            // gRPC streaming indicator. Muted when configured, green after a recent chunk.
+            Rectangle {
+                id: grpcBadge
+                visible: item.grpcStreamConfigured
                 anchors.left: statusTextVal.right
-                anchors.leftMargin: 16
+                anchors.leftMargin: 10
+                anchors.verticalCenter: statusTextVal.verticalCenter
+                width: grpcBadgeText.width + 14
+                height: 18
+                radius: 4
+                color: item.grpcStreamRecentlyActive ? "#2b7a3d" : "#5a3b22"
+                border.color: item.grpcStreamRecentlyActive ? "#3fae5a" : "#b46a2b"
+                border.width: 1
+                opacity: item.grpcStreamRecentlyActive ? 1.0 : 0.8
+                MoneroComponents.TextPlain {
+                    id: grpcBadgeText
+                    anchors.centerIn: parent
+                    text: "gRPC"
+                    font.family: MoneroComponents.Style.fontMedium.name
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: "#ffffff"
+                    themeTransition: false
+                    tooltip: item.grpcStreamRecentlyActive
+                        ? qsTr("Cuprate gRPC stream active") + translationManager.emptyString
+                        : qsTr("Cuprate gRPC stream configured; waiting for the next streaming block batch") + translationManager.emptyString
+                }
+            }
+
+            MoneroComponents.TextPlain {
+                anchors.left: grpcBadge.visible ? grpcBadge.right : statusTextVal.right
+                anchors.leftMargin: grpcBadge.visible ? 8 : 16
                 anchors.verticalCenter: parent.verticalCenter
                 color: refreshMouseArea.containsMouse ?  MoneroComponents.Style.defaultFontColor : MoneroComponents.Style.dimmedFontColor
                 font.family: FontAwesome.fontFamilySolid

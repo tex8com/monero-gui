@@ -384,8 +384,10 @@ ApplicationWindow {
             const remoteNode = remoteNodesModel.currentRemoteNode();
             currentDaemonAddress = remoteNode.address;
             currentWallet.setDaemonLogin(remoteNode.username, remoteNode.password);
+            currentWallet.setGrpcStreamEndpoint(remoteNodesModel.grpcEndpointFor(remoteNode));
         } else {
             currentDaemonAddress = localDaemonAddress;
+            currentWallet.setGrpcStreamEndpoint("");
         }
 
         console.log("initializing with daemon address: ", currentDaemonAddress)
@@ -702,6 +704,7 @@ ApplicationWindow {
             const remoteNode = remoteNodesModel.currentRemoteNode();
             currentDaemonAddress = remoteNode.address;
             currentWallet.setDaemonLogin(remoteNode.username, remoteNode.password);
+            currentWallet.setGrpcStreamEndpoint(remoteNodesModel.grpcEndpointFor(remoteNode));
             currentWallet.initAsync(
                 currentDaemonAddress,
                 isTrustedDaemon(),
@@ -732,6 +735,7 @@ ApplicationWindow {
         persistentSettings.useRemoteNode = false;
         currentDaemonAddress = localDaemonAddress
         currentWallet.setDaemonLogin("", "");
+        currentWallet.setGrpcStreamEndpoint("");
         currentWallet.initAsync(
             currentDaemonAddress,
             isTrustedDaemon(),
@@ -1431,6 +1435,8 @@ ApplicationWindow {
             }
         } else console.log("qrScannerEnabled disabled");
 
+        remoteNodesModel.initialize();
+
         if(!walletsFound()) {
             wizard.wizardState = "wizardLanguage";
             rootItem.state = "wizard"
@@ -1461,7 +1467,6 @@ ApplicationWindow {
             }
         }
 
-        remoteNodesModel.initialize();
     }
 
     MoneroSettings {
@@ -1509,6 +1514,7 @@ ApplicationWindow {
                 nodes: remoteNodeAddress != ""
                     ? [{
                         address: remoteNodeAddress,
+                        grpcAddress: "",
                         username: daemonUsername,
                         password: daemonPassword,
                         trusted: is_trusted_daemon,
@@ -1570,16 +1576,75 @@ ApplicationWindow {
 
     ListModel {
         id: remoteNodesModel
+        dynamicRoles: true
 
         property int selected: 0
 
         signal store()
 
+        function parseHostPort(address) {
+            const text = (address || "").trim();
+            const separator = text.lastIndexOf(":");
+            if (separator <= 0 || separator === text.length - 1) {
+                return {host: text, port: ""};
+            }
+            return {
+                host: text.substring(0, separator),
+                port: text.substring(separator + 1),
+            };
+        }
+
+        function defaultGrpcPort(rpcPort) {
+            if (rpcPort === "18089") return "18091";
+            if (rpcPort === "28089") return "28091";
+            if (rpcPort === "38089") return "38091";
+            return "";
+        }
+
+        function isTex8CuprateHost(host) {
+            return host === "152.53.133.188" || host === "10.80.8.1" || host === "tex8.com";
+        }
+
+        function defaultGrpcAddress(address) {
+            const hostPort = parseHostPort(address);
+            if (!isTex8CuprateHost(hostPort.host)) {
+                return "";
+            }
+
+            const grpcPort = defaultGrpcPort(hostPort.port);
+            if (grpcPort === "") {
+                return "";
+            }
+
+            // tex8.com is Cloudflare-proxied for the public web edge; raw gRPC
+            // on 18091 must use the origin IP until a DNS-only record exists.
+            const grpcHost = hostPort.host === "tex8.com" ? "152.53.133.188" : hostPort.host;
+            return grpcHost + ":" + grpcPort;
+        }
+
+        function normalize(remoteNode) {
+            const address = remoteNode.address || "";
+            const grpcAddress = remoteNode.grpcAddress || defaultGrpcAddress(address);
+            return {
+                address: address,
+                grpcAddress: grpcAddress,
+                username: remoteNode.username || "",
+                password: remoteNode.password || "",
+                trusted: !!remoteNode.trusted,
+            };
+        }
+
+        function grpcEndpointFor(remoteNode) {
+            return (remoteNode.grpcAddress || defaultGrpcAddress(remoteNode.address || "") || "").trim();
+        }
+
         function initialize() {
+            var migrated = false;
             try {
                 const remoteNodes = JSON.parse(persistentSettings.remoteNodesSerialized);
                 for (var index = 0; index < remoteNodes.nodes.length; ++index) {
-                    const remoteNode = remoteNodes.nodes[index];
+                    const remoteNode = normalize(remoteNodes.nodes[index]);
+                    migrated = migrated || (remoteNode.grpcAddress || "") !== (remoteNodes.nodes[index].grpcAddress || "");
                     remoteNodesModel.append(remoteNode);
                 }
                 selected = remoteNodes.selected % remoteNodesModel.count || 0;
@@ -1597,12 +1662,18 @@ ApplicationWindow {
                     nodes: remoteNodes
                 });
             });
+
+            if (migrated) {
+                store();
+            }
         }
 
         function appendIfNotExists(newRemoteNode) {
+            newRemoteNode = normalize(newRemoteNode);
             for (var index = 0; index < remoteNodesModel.count; ++index) {
                 const remoteNode = remoteNodesModel.get(index);
                 if (remoteNode.address == newRemoteNode.address &&
+                    (remoteNode.grpcAddress || "") == (newRemoteNode.grpcAddress || "") &&
                     remoteNode.username == newRemoteNode.username &&
                     remoteNode.password == newRemoteNode.password &&
                     remoteNode.trusted == newRemoteNode.trusted) {
@@ -1620,8 +1691,10 @@ ApplicationWindow {
             if (currentWallet) {
                 currentWallet.setDaemonLogin(remoteNode.username, remoteNode.password);
                 currentWallet.setTrustedDaemon(remoteNode.trusted);
+                currentWallet.setGrpcStreamEndpoint(grpcEndpointFor(remoteNode));
                 appWindow.connectRemoteNode();
             }
+            store();
         }
 
         function currentRemoteNode() {
@@ -1630,6 +1703,7 @@ ApplicationWindow {
             }
             return {
                 address: "",
+                grpcAddress: "",
                 username: "",
                 password: "",
                 trusted: false,

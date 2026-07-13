@@ -181,6 +181,13 @@ public:
     //! indicates id daemon is trusted
     Q_INVOKABLE void setTrustedDaemon(bool arg);
 
+    //! configures the optional Cuprate gRPC streaming sync endpoint.
+    Q_INVOKABLE void setGrpcStreamEndpoint(const QString &endpoint);
+    Q_INVOKABLE QString grpcStreamEndpoint() const;
+
+    //! true when the cuprate gRPC streaming sync path has produced a recent chunk.
+    Q_INVOKABLE bool grpcStreamActive() const;
+
     //! returns balance
     Q_INVOKABLE quint64 balance() const;
     Q_INVOKABLE quint64 balance(quint32 accountIndex) const;
